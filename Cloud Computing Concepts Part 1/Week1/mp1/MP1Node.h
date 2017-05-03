@@ -14,12 +14,17 @@
 #include "Member.h"
 #include "EmulNet.h"
 #include "Queue.h"
+#include <map>
+#include <algorithm>
 
 /**
  * Macros
  */
 #define TREMOVE 20
 #define TFAIL 5
+#define MSGTYPESIZE sizeof(MessageHdr)
+#define ADDRSIZE sizeof(Address)
+#define ADDRARYSIZE sizeof(memberNode->addr.addr)
 
 /*
  * Note: You can change/add any functions in MP1Node.{h,cpp}
@@ -31,6 +36,12 @@
 enum MsgTypes{
     JOINREQ,
     JOINREP,
+	PING,
+	ACK,
+	SUBPING,
+	SUBPINGREQ,
+	SUBPINGREP,
+	SUBPINGACK,
     DUMMYLASTMSGTYPE
 };
 
@@ -54,6 +65,9 @@ private:
 	Log *log;
 	Params *par;
 	Member *memberNode;
+	MemberListEntry *lastEntry;
+	int id;
+	int port;
 	char NULLADDR[6];
 
 public:
@@ -70,11 +84,25 @@ public:
 	void nodeLoop();
 	void checkMessages();
 	bool recvCallBack(void *env, char *data, int size);
+	bool joinHandler(char *data, int size);
+	void joinrepHandler();
 	void nodeLoopOps();
 	int isNullAddress(Address *addr);
 	Address getJoinAddress();
 	void initMemberListTable(Member *memberNode);
 	void printAddress(Address *addr);
+	void initCounter();
+	void updateStatus();
+	void countDownCounter();
+	void checkCounter();
+	void fillPiggyback(char *msg, size_t offset);
+
+	void sendPing();
+	Address getRandomNeighbor();
+	void logRemoveEntry();
+	void sendSubping();
+	Address getListEntryAddr(MemberListEntry* entry);
+
 	virtual ~MP1Node();
 };
 

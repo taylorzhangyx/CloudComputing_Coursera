@@ -89,6 +89,7 @@ Application::~Application() {
  */
 int Application::run()
 {
+	cout<< "Running"<<endl;
 	int i;
 	int timeWhenAllNodesHaveJoined = 0;
 	// boolean indicating if all nodes have joined
