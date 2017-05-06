@@ -86,6 +86,14 @@ public:
 	bool recvCallBack(void *env, char *data, int size);
 	bool joinHandler(char *data, int size);
 	void joinrepHandler();
+
+	void pingHandler(char *data);
+	void ackHandler(char *data, int size);
+	void subpingHandler(char *data, size_t size);
+	void subpingreqHandler(char *data, size_t size);
+	void subpingrepHandler(char *data, size_t size);
+	void subpingackHandler(char *data, size_t size);
+
 	void nodeLoopOps();
 	int isNullAddress(Address *addr);
 	Address getJoinAddress();
@@ -95,12 +103,21 @@ public:
 	void updateStatus();
 	void countDownCounter();
 	void checkCounter();
-	void fillPiggyback(char *msg, size_t offset);
+	void fillPiggyback(char *msg, unsigned int offset);
+	void processPiggyback(char *msg, unsigned int offset);
+
+	void updateMemberList(MemberListEntry* entry);
 
 	void sendPing();
+	void sendSubping();
+	void sendACK(Address* addr);
+	void sendSubpingreq(Address* srcaddr, Address* destaddr);
+	void sendSubpingrep(Address* srcaddr, Address* midaddr);
+	void sendSubpingack(Address* srcaddr, Address* destaddr);
+
 	Address getRandomNeighbor();
 	void logRemoveEntry();
-	void sendSubping();
+	void logRemoveEntry(MemberListEntry *entryToRemove);
 	Address getListEntryAddr(MemberListEntry* entry);
 
 	virtual ~MP1Node();
