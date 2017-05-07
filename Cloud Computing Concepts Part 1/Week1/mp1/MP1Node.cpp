@@ -112,6 +112,13 @@ int MP1Node::initThisNode(Address *joinaddr) {
 	memberNode->timeOutCounter = -1;
 	initMemberListTable(memberNode);
 
+
+	// inite mypos, this is the first entry in the list
+	MemberListEntry entry = MemberListEntry(id, memberNode->addr.addr[4], memberNode->heartbeat, par->getcurrtime());
+	memberNode->memberList.push_back(entry);
+	memberNode->myPos = memberNode->memberList.begin();
+	log->logNodeAdd(&memberNode->addr, &memberNode->addr);
+
 	return 0;
 }
 
@@ -238,16 +245,22 @@ bool MP1Node::recvCallBack(void *env, char *data, int size) {
 		joinrepHandler();
 		break;
 	case(PING):
+		pingHandler(data);
 		break;
 	case(ACK):
+		ackHandler(data, size);
 		break;
 	case(SUBPING):
+		subpingHandler(data, size);
 		break;
 	case(SUBPINGREQ):
+		subpingreqHandler(data, size);
 		break;
 	case(SUBPINGREP):
+		subpingrepHandler(data, size);
 		break;
 	case(SUBPINGACK):
+		subpingackHandler(data, size);
 		break;
 
 	case(DUMMYLASTMSGTYPE):
@@ -335,29 +348,320 @@ bool MP1Node::joinHandler(char *data, int size) {
 */
 void MP1Node::joinrepHandler() {
 	memberNode->inGroup = true;
-	initCounter();
-	memberNode->myPos = memberNode->memberList.end();
-	//check the member list and put this node in the list
-	auto list = memberNode->memberList.begin();
-	for (; list != memberNode->memberList.end(); list++) {
-		if (list->id == id) {
-			list->heartbeat = memberNode->heartbeat;
-			list->timestamp = par->globaltime;
-			memberNode->myPos = list;
-			break;
-		}
-	}
-	if (memberNode->myPos == memberNode->memberList.end()) {
-		MemberListEntry entry = MemberListEntry(id, memberNode->addr.addr[4], memberNode->heartbeat, par->getcurrtime());
-		memberNode->memberList.push_back(entry);
-		memberNode->myPos = memberNode->memberList.end()-1;
-	}
-
+	//this node is already in the list
 #ifdef DEBUGLOG
 	static char s[1024];
 	sprintf(s, "Node id=%d is online with heartbeat=%ld, timestamp=%ld.\n", this->id, memberNode->myPos->heartbeat, memberNode->myPos->timestamp);
 	log->LOG(&memberNode->addr, s);
 #endif
+
+	//start counting
+	initCounter();
+	//prepare first ping message and send
+	sendPing();
+}
+
+
+/**
+* FUNCTION NAME: pingHandler
+*
+* DESCRIPTION: process ping message
+*/
+void MP1Node::pingHandler(char *data){
+
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "PingHandler.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+	//get address
+	Address* addr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&addr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "Get PING from %s.\n", addr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//update member list entry
+	processPiggyback(data, (unsigned int) MSGTYPESIZE + ADDRARYSIZE + 1 );
+
+	//send Ack back
+	sendACK(addr);
+	free(addr);
+}
+
+/**
+* FUNCTION NAME: subpingHandler
+*
+* DESCRIPTION: process subping message
+*/
+void MP1Node::subpingHandler(char *data, size_t size) {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "SubpingHandler.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+	//get address
+	Address* srcaddr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&srcaddr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+	Address* destaddr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&destaddr->addr, data + MSGTYPESIZE + ADDRARYSIZE + 1, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "Get Subping from %s.\n", srcaddr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//update member list entry
+	processPiggyback(data, (unsigned int)MSGTYPESIZE + 2*(ADDRARYSIZE + 1));
+
+	//send sendSubpingreq back
+	sendSubpingreq(srcaddr, destaddr);
+	free(srcaddr);
+	free(destaddr);
+}
+
+/**
+* FUNCTION NAME: subpingHandler
+*
+* DESCRIPTION: process subping message
+*/
+void MP1Node::subpingreqHandler(char *data, size_t size) {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "subpingreqHandler.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+	//get address
+	Address* srcaddr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&srcaddr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+	Address* midaddr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&midaddr->addr, data + MSGTYPESIZE + ADDRARYSIZE + 1, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "Get subpingreq from %s.\n", srcaddr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//update member list entry
+	processPiggyback(data, (unsigned int)MSGTYPESIZE + 2 * (ADDRARYSIZE + 1));
+
+	//send sendSubpingreq back
+	sendSubpingrep(srcaddr, midaddr);
+	free(srcaddr);
+	free(midaddr);
+}
+
+/**
+* FUNCTION NAME: subpingHandler
+*
+* DESCRIPTION: process subping message
+*/
+void MP1Node::subpingrepHandler(char *data, size_t size) {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "subpingrepHandler.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+	//get address
+	Address* srcaddr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&srcaddr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+	Address* midaddr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&midaddr->addr, data + MSGTYPESIZE + ADDRARYSIZE + 1, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "Get subpingrep from %s.\n", srcaddr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//update member list entry
+	processPiggyback(data, (unsigned int)MSGTYPESIZE + 2 * (ADDRARYSIZE + 1));
+
+	//send sendSubpingreq back
+	sendSubpingack(srcaddr, midaddr);
+	free(srcaddr);
+	free(midaddr);
+}
+
+/**
+* FUNCTION NAME: subpingHandler
+*
+* DESCRIPTION: process subping message
+*/
+void MP1Node::subpingackHandler(char *data, size_t size) {
+
+#ifdef DEBUGLOG
+	static char s[512];
+	sprintf(s, "ackHandler with size=%lu.\n", size);
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//get address
+	Address* addr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&addr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "Assigned addr.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	memcpy(&addr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "SUBPINGACK was received from %s.\n", addr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//an ack back and remove lastentry
+	if (*(int *)addr->addr == lastEntry->getid()) {
+		lastEntry = NULL;
+#ifdef DEBUGLOG
+		static char s[1024];
+		sprintf(s, "Remove lastEntry.\n");
+		log->LOG(&memberNode->addr, s);
+#endif
+	}
+
+	//update member list entry
+	processPiggyback(data, (unsigned int)MSGTYPESIZE + 2*(ADDRARYSIZE + 1));
+	free(addr);
+}
+
+
+/**
+* FUNCTION NAME: ackHandler
+*
+* DESCRIPTION: process ack message
+*/
+void MP1Node::ackHandler(char *data, int size) {
+
+#ifdef DEBUGLOG
+	static char s[512];
+	sprintf(s, "ackHandler with size=%d.\n", size);
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//get address
+	Address* addr = (Address *)malloc(ADDRSIZE * sizeof(char));
+	memcpy(&addr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "Assigned addr.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	memcpy(&addr->addr, data + MSGTYPESIZE, ADDRARYSIZE);
+
+#ifdef DEBUGLOG
+	sprintf(s, "ACK was received from %s.\n", addr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//an ack back and remove lastentry
+	if (*(int *)addr->addr == lastEntry->getid()) {
+		lastEntry = NULL;
+		//set timeoutcounter to -1
+		memberNode->timeOutCounter = -1;//set to nagative to avoid counter 0 again
+#ifdef DEBUGLOG
+		static char s[1024];
+		sprintf(s, "Remove lastEntry.\n");
+		log->LOG(&memberNode->addr, s);
+#endif
+	}
+
+	//update member list entry
+	processPiggyback(data, (unsigned int) MSGTYPESIZE + ADDRARYSIZE + 1);
+	free(addr);
+}
+
+
+/**
+* FUNCTION NAME: processPiggyback
+*
+* DESCRIPTION: given message and offset, update member entry
+*/
+void MP1Node::processPiggyback(char *msg, unsigned int offset) {
+	size_t size;
+	memcpy(&size, msg + offset, sizeof(size_t));
+
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "Message received is %lu.\n", MSGTYPESIZE);
+	log->LOG(&memberNode->addr, s);
+	sprintf(s, "ProcessPiggyback with %lu entrys.\n",size);
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	MemberListEntry* entry = (MemberListEntry*) malloc(sizeof(MemberListEntry) * sizeof(char));
+	for (int counter = 0; size > 0; size--, counter++) {
+		memcpy(entry, msg + offset + sizeof(size_t) + counter * sizeof(MemberListEntry), sizeof(MemberListEntry));
+		//process entry
+		updateMemberList(entry);
+	}
+	free(entry);
+}
+
+
+/**
+* FUNCTION NAME: fillPiggyback
+*
+* DESCRIPTION: Take the pointer of message and offset to fill all memberlistentry
+*/
+void MP1Node::fillPiggyback(char *msg, unsigned int  offset) {
+	size_t size = (size_t)memberNode->memberList.size();
+	memcpy(msg + offset, &size, sizeof(size_t));
+
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "Filled %lu entries in piggyback.\n", size);
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	auto list = memberNode->memberList.begin();
+	for (int i = 0; list != memberNode->memberList.end(); list++, i++) {
+		memcpy(msg + offset + sizeof(size_t) + i * sizeof(MemberListEntry), &(*list), sizeof(MemberListEntry));
+	}
+}
+
+/**
+* FUNCTION NAME: updateMemberList
+*
+* DESCRIPTION: Given a entry, check heart beat and update, if not exist, add this entry
+*/
+void MP1Node::updateMemberList(MemberListEntry* entry) {
+	vector<MemberListEntry>::iterator it = memberNode->memberList.begin();
+
+	//if in the list, update status
+	for (; it != memberNode->memberList.end(); it++) {
+		if (it->id == entry->id) {
+			//exist in the list
+			if (it->heartbeat < entry->getheartbeat()) {
+				//it is a newer one
+				it->heartbeat = entry->getheartbeat();
+				if (entry->timestamp < 0 && it->timestamp > 0) {
+					//a new failed entry was noticed
+					logRemoveEntry(entry);
+					it->timestamp = entry->timestamp;
+				}
+				else {
+					it->timestamp = par->globaltime;
+				}
+			}
+			//there is a match
+			entry->setheartbeat(-1);
+		}
+	}
+
+	//not in the list
+	if (entry->getheartbeat() != -1L) {
+		Address entryAddr;
+		*(int *)(&entryAddr.addr) = entry->id;
+		*(short *)(&entryAddr.addr[4]) = entry->port;
+		log->logNodeAdd(&memberNode->addr, &entryAddr);//log new node
+		memberNode->memberList.push_back(MemberListEntry(*entry));
+		if (entry->timestamp >= 0)memberNode->nnb++;//this is a live node
+	}
 }
 
 /**
@@ -374,6 +678,8 @@ void MP1Node::nodeLoopOps() {
 	 */
 #ifdef DEBUGLOG
 	static char s[1024];
+	sprintf(s, "Enter nodeLoopOps().\n");
+	log->LOG(&memberNode->addr, s);
 #endif
 
 	//update new heartbeat
@@ -397,27 +703,45 @@ void MP1Node::nodeLoopOps() {
 * DESCRIPTION: check the counter to decide the next step
 */
 void MP1Node::checkCounter() {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "checkCounter.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
 	if (memberNode->pingCounter == 0) {
+#ifdef DEBUGLOG
+		sprintf(s, "Pingcounter reaches 0.\n");
+		log->LOG(&memberNode->addr, s);
+#endif
 		//remove last
 		if (lastEntry != NULL) {
+#ifdef DEBUGLOG
+			sprintf(s, "Enter remove last entry.\n");
+			log->LOG(&memberNode->addr, s);
+#endif
 			logRemoveEntry();
 			lastEntry->timestamp = -1;//set as failed node
 			lastEntry = NULL;
 		}
 
-		//prepare ping message and send
-		sendPing();
 		//reset pingcounter and timeout counter
 		initCounter();
+		//prepare ping message and send
+		sendPing();
 	}
 
 	if (memberNode->timeOutCounter == 0) {
+#ifdef DEBUGLOG
+		sprintf(s, "timeOutCounter reaches 0.");
+		log->LOG(&memberNode->addr, s);
+#endif
 		//prepare subping message
 		sendSubping();
 
 		//set timeoutcounter to -1
 		memberNode->timeOutCounter = -1;//set to nagative to avoid counter 0 again
 	}
+
 }
 
 /**
@@ -429,24 +753,26 @@ void MP1Node::sendPing() {
 
 #ifdef DEBUGLOG
 	static char s[1024];
+	sprintf(s, "sendPing.\n");
+	log->LOG(&memberNode->addr, s);
 #endif
 
 	//check if aviliable neighbor to send ping
 	if (memberNode->nnb > 0) {
-		size_t msgsize = sizeof(MessageHdr) + sizeof(Address) + 1 + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
+		size_t msgsize = MSGTYPESIZE + ADDRARYSIZE + 1 + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
 		MessageHdr* msg = (MessageHdr *)malloc(msgsize * sizeof(char));
 
 		msg->msgType = PING;
-		memcpy((char *)(msg + 1), &memberNode->addr.addr, ADDRARYSIZE);
+		memcpy((char *)msg + MSGTYPESIZE, &memberNode->addr.addr, ADDRARYSIZE);
 
 		//fill payload
-		fillPiggyback((char *)msg, (size_t)1 + ADDRARYSIZE + 1);
+		fillPiggyback((char *)msg, (unsigned int)MSGTYPESIZE + ADDRARYSIZE + 1);
 
 		//select a random live neighbor
 		Address toAddr = getRandomNeighbor();
 
 #ifdef DEBUGLOG
-		sprintf(s, "Ping send to %s.\n", toAddr.getAddress().c_str());
+		sprintf(s, "Ping send from %s to %s.\n", memberNode->addr.getAddress().c_str(), toAddr.getAddress().c_str());
 		log->LOG(&memberNode->addr, s);
 #endif
 
@@ -460,10 +786,39 @@ void MP1Node::sendPing() {
 		sprintf(s, "No neighbor aviliable.\n");
 		log->LOG(&memberNode->addr, s);
 #endif
+		memberNode->timeOutCounter = -1;
 	}
 
 }
 
+/**
+* FUNCTION NAME: sendACK
+*
+* DESCRIPTION: send the Ack back and piggyback memberlist
+*/
+void MP1Node::sendACK(Address* addr) {
+	updateStatus();
+
+	size_t msgsize = MSGTYPESIZE + ADDRARYSIZE + 1 + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
+	MessageHdr* msg = (MessageHdr *)malloc(msgsize * sizeof(char));
+
+	msg->msgType = ACK;
+	memcpy((char *)msg + MSGTYPESIZE, &memberNode->addr.addr, ADDRARYSIZE);
+
+	//fill payload
+	fillPiggyback((char *)msg, (unsigned int)(MSGTYPESIZE + ADDRARYSIZE + 1));
+
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "ACK send from %s to %s.\n", memberNode->addr.getAddress().c_str(),addr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	// send PING message to detect member
+	emulNet->ENsend(&memberNode->addr, addr, (char *)msg, msgsize);
+
+	free(msg);
+}
 
 /**
 * FUNCTION NAME: sendSubping
@@ -479,16 +834,16 @@ void MP1Node::sendSubping() {
 	//check if more aviliable neighbor to send ping
 	if (memberNode->nnb > 1) {
 		//prepare message
-		size_t msgsize = sizeof(MessageHdr) + 2 * (sizeof(Address) + 1) + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
+		size_t msgsize = MSGTYPESIZE + 2 * (ADDRARYSIZE + 1) + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
 		MessageHdr* msg = (MessageHdr *)malloc(msgsize * sizeof(char));
 
 		msg->msgType = SUBPING;
-		memcpy((char *)(msg + 1), &memberNode->addr.addr, ADDRARYSIZE);
+		memcpy((char *)(msg + MSGTYPESIZE), &memberNode->addr.addr, ADDRARYSIZE);
 		Address destination = getListEntryAddr(lastEntry);
-		memcpy((char *)(msg + 1 + ADDRARYSIZE + 1), &destination.addr, ADDRARYSIZE);//destination address
+		memcpy((char *)(msg + MSGTYPESIZE + ADDRARYSIZE + 1), &destination.addr, ADDRARYSIZE);//destination address
 
 		//fill payload
-		fillPiggyback((char *)msg, (size_t) 1 + 2*(ADDRARYSIZE + 1));
+		fillPiggyback((char *)msg, (unsigned int)MSGTYPESIZE + 2*(ADDRARYSIZE + 1));
 
 #ifdef DEBUGLOG
 		sprintf(s, "SUBPING to detect %s is ready.\n", getListEntryAddr(lastEntry).getAddress().c_str());
@@ -519,18 +874,107 @@ void MP1Node::sendSubping() {
 }
 
 /**
-* FUNCTION NAME: fillPiggyback
+* FUNCTION NAME: sendSubpingreq
 *
-* DESCRIPTION: Take the pointer of message and offset to fill all memberlistentry
+* DESCRIPTION: prepare subpringreq message with message type, from address, to address and piggyback infos then send
 */
-void MP1Node::fillPiggyback(char *msg, size_t offset) {
-	size_t size = memberNode->memberList.size();
-	memcpy(msg + offset, &size, sizeof(size_t));
-	auto list = memberNode->memberList.begin();
-	int i;
-	for (i = 0; list != memberNode->memberList.end(); list++, i++) {
-		memcpy(msg + offset + sizeof(size_t) + i * sizeof(MemberListEntry), &(*list), sizeof(MemberListEntry));
-	}
+void MP1Node::sendSubpingreq(Address* srcaddr, Address* destaddr) {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "sendSubpingreq.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//prepare message
+	size_t msgsize = MSGTYPESIZE + 2 * (ADDRARYSIZE + 1) + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
+	MessageHdr* msg = (MessageHdr *)malloc(msgsize * sizeof(char));
+
+	msg->msgType = SUBPINGREQ;
+	memcpy((char *)msg + MSGTYPESIZE, &srcaddr->addr, ADDRARYSIZE);
+	memcpy((char *)msg + MSGTYPESIZE + ADDRARYSIZE + 1, &memberNode->addr.addr , ADDRARYSIZE);//destination address
+
+	//fill payload
+	fillPiggyback((char *)msg, (unsigned int)MSGTYPESIZE + 2 * (ADDRARYSIZE + 1));
+
+#ifdef DEBUGLOG
+	sprintf(s, "Send SUBPINGREQ to %s.\n", destaddr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	// send SUBPING message to detect member
+	emulNet->ENsend(&memberNode->addr, destaddr, (char *)msg, msgsize);
+
+	free(msg);
+
+
+}
+
+/**
+* FUNCTION NAME: sendSubpingrep
+*
+* DESCRIPTION: prepare subpringrep message with message type, from address, to address and piggyback infos then send
+*/
+void MP1Node::sendSubpingrep(Address* srcaddr, Address* midaddr) {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "sendSubpingrep.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//prepare message
+	size_t msgsize = MSGTYPESIZE + 2 * (ADDRARYSIZE + 1) + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
+	MessageHdr* msg = (MessageHdr *)malloc(msgsize * sizeof(char));
+
+	msg->msgType = SUBPINGREP;
+	memcpy((char *)msg + MSGTYPESIZE, &srcaddr->addr, ADDRARYSIZE);
+	memcpy((char *)msg + MSGTYPESIZE + ADDRARYSIZE + 1, &memberNode->addr.addr, ADDRARYSIZE);//destination address
+
+																							 //fill payload
+	fillPiggyback((char *)msg, (unsigned int)MSGTYPESIZE + 2 * (ADDRARYSIZE + 1));
+
+#ifdef DEBUGLOG
+	sprintf(s, "Send SUBPINGREP to %s.\n", midaddr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	// send SUBPING message to detect member
+	emulNet->ENsend(&memberNode->addr, midaddr, (char *)msg, msgsize);
+
+	free(msg);
+}
+
+
+/**
+* FUNCTION NAME: sendSubpingack
+*
+* DESCRIPTION: prepare subpringrep message with message type, from address, to address and piggyback infos then send
+*/
+void MP1Node::sendSubpingack(Address* srcaddr, Address* destaddr) {
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "sendSubpingack.\n");
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//prepare message
+	size_t msgsize = MSGTYPESIZE + 2 * (ADDRARYSIZE + 1) + sizeof(size_t) + sizeof(MemberListEntry) * memberNode->memberList.size();
+	MessageHdr* msg = (MessageHdr *)malloc(msgsize * sizeof(char));
+
+	msg->msgType = SUBPINGACK;
+	memcpy((char *)msg + MSGTYPESIZE, &destaddr->addr, ADDRARYSIZE);
+	memcpy((char *)msg + MSGTYPESIZE + ADDRARYSIZE + 1, &memberNode->addr.addr, ADDRARYSIZE);//destination address
+
+	fillPiggyback((char *)msg, (unsigned int)MSGTYPESIZE + 2 * (ADDRARYSIZE + 1));
+
+#ifdef DEBUGLOG
+	sprintf(s, "Send sendSubpingack to %s.\n", srcaddr->getAddress().c_str());
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	// send SUBPING message to detect member
+	emulNet->ENsend(&memberNode->addr, srcaddr, (char *)msg, msgsize);
+
+	free(msg);
 }
 
 /**
@@ -557,7 +1001,11 @@ Address MP1Node::getJoinAddress() {
 	return joinaddr;
 }
 
-
+/**
+* FUNCTION NAME: logRemoveEntry
+*
+* DESCRIPTION: Called when lastentry is not NULL, build address of lastEntry and log it.
+*/
 void MP1Node::logRemoveEntry() {
 
 	//build addr of removed node
@@ -577,6 +1025,31 @@ void MP1Node::logRemoveEntry() {
 }
 
 /**
+* FUNCTION NAME: logRemoveEntry
+*
+* DESCRIPTION: Called when the entry was noticed to be failed, build address of lastEntry and log it.
+*/
+void MP1Node::logRemoveEntry(MemberListEntry *entryToRemove) {
+
+	//build addr of removed node
+	Address neighborAddr;
+	memset(&neighborAddr, 0, sizeof(Address));
+	*(int *)(&neighborAddr.addr) = entryToRemove->id;
+	*(short *)(&neighborAddr.addr[4]) = entryToRemove->port;
+
+#ifdef DEBUGLOG
+	static char s[1024];
+	sprintf(s, "Node %s was removed from node %s at %d.\n", neighborAddr.getAddress().c_str(), memberNode->addr.getAddress().c_str(), par->globaltime);
+	log->LOG(&memberNode->addr, s);
+#endif
+
+	//log the remove node
+	log->logNodeRemove(&memberNode->addr, &neighborAddr);
+}
+
+
+
+/**
 * FUNCTION NAME: getRandomNeighbor
 *
 * DESCRIPTION: Returns the Address of the selected random living neighbor
@@ -584,11 +1057,11 @@ void MP1Node::logRemoveEntry() {
 Address MP1Node::getRandomNeighbor() {
 	int i = rand() % memberNode->memberList.size();
 
-	while (memberNode->memberList[i].timestamp == -1) {
+	while (memberNode->memberList[i].timestamp == -1 || i==0) {
 		i = rand() % memberNode->memberList.size();
 	}
+	
 	lastEntry = &memberNode->memberList[i];
-
 
 	return getListEntryAddr(lastEntry);
 }
